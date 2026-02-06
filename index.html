@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hytera Startup GIF Generator</title>
+
+<style>
+body {
+    font-family: system-ui, sans-serif;
+    background: #0f0f0f;
+    color: #ddd;
+    margin: 0;
+    padding: 20px;
+}
+
+h1 { font-size: 1.3rem; }
+
+.container {
+    display: flex;
+    gap: 24px;
+}
+
+.controls {
+    width: 340px;
+    background: #151515;
+    padding: 14px;
+    border-radius: 6px;
+}
+
+label {
+    display: block;
+    margin-top: 12px;
+    font-size: 0.85rem;
+}
+
+input, select, button {
+    width: 100%;
+    padding: 6px;
+    margin-top: 4px;
+    background: #1d1d1d;
+    color: #ddd;
+    border: 1px solid #333;
+    border-radius: 4px;
+}
+
+button { cursor: pointer; }
+
+.preview img {
+    border: 1px solid #333;
+    padding: 6px;
+    border-radius: 4px;
+    background: black;
+}
+
+.small { font-size: 0.75rem; opacity: 0.7; }
+</style>
+</head>
+
+<body>
+
+<h1>Hytera Radio Startup GIF Generator</h1>
+
+<div class="container">
+<div class="controls">
+
+    <label>Radio Model</label>
+    <select id="radioSelect">
+        <option value="128x160">PD / HP682 — 128×160</option>
+        <option value="240x320">PD7 / HP7 — 240×320</option>
+        <option value="160x240">Legacy Color — 160×240</option>
+    </select>
+
+    <label>Upload Image</label>
+    <input type="file" id="imageInput" accept="image/*">
+
+    <label>Overlay Text (optional)</label>
+    <input type="text" id="textInput" placeholder="Company Name">
+
+    <label>Fade Strength</label>
+    <input type="range" id="fadeStrength" min="0.3" max="2" step="0.1" value="1.0">
+
+    <label>GIF Length (seconds)</label>
+    <input type="number" id="gifLength" value="1.5" step="0.1">
+
+    <button onclick="generateGIF()">Generate GIF</button>
+
+    <div class="small">Guaranteed &lt; 40 KiB · No cropping · Portrait safe</div>
+
+</div>
+
+<div class="preview">
+    <h3>Preview</h3>
+    <img id="gifPreview">
+    <br>
+    <button id="downloadBtn" style="display:none;">Download GIF</button>
+    <div id="sizeInfo" class="small"></div>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gifshot@0.3.2/build/gifshot.min.js"></script>
+
+<script>
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+
+let jpegQuality = 0.90;
+
+// Sample background color from image edge
+function sampleEdgeColor(img) {
+    const tmp = document.createElement('canvas');
+    tmp.width = img.width;
+    tmp.height = img.height;
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(img, 0, 0);
+    const p = tctx.getImageData(1, 1, 1, 1).data;
+    return `rgb(${p[0]},${p[1]},${p[2]})`;
+}
+
+// Draw image with correct aspect ratio (NO cropping)
+function drawContain(img, w, h, bg) {
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    const scale = Math.min(w / img.width, h / img.height);
+    const dw = img.width * scale;
+    const dh = img.height * scale;
+
+    const dx = (w - dw) / 2;
+    const dy = (h - dh) / 2;
+
+    ctx.drawImage(img, dx, dy, dw, dh);
+}
+
+// Build a single animation frame
+function generateFrame(img, w, h, brightness, contrast, text, bg) {
+    canvas.width = w;
+    canvas.height = h;
+
+    ctx.filter = `brightness(${brightness}) contrast(${contrast})`;
+    drawContain(img, w, h, bg);
+    ctx.filter = 'none';
+
+    if (text) {
+        ctx.font = `${Math.floor(h * 0.07)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillStyle = "white";
+        ctx.shadowColor = "black";
+        ctx.shadowBlur = 4;
+        ctx.fillText(text, w / 2, h - 10);
+    }
+
+    return canvas.toDataURL("image/jpeg", jpegQuality);
+}
+
+// Main logic
+function generateGIF() {
+    const file = document.getElementById("imageInput").files[0];
+    if (!file) return alert("Upload an image first");
+
+    const [w, h] = document.getElementById("radioSelect").value.split("x").map(Number);
+    const fade = parseFloat(document.getElementById("fadeStrength").value);
+    const text = document.getElementById("textInput").value;
+    const gifLength = parseFloat(document.getElementById("gifLength").value) * 1000;
+
+    jpegQuality = 0.75;
+
+    const img = new Image();
+    img.onload = () => {
+        const bg = sampleEdgeColor(img);
+
+        function buildGIF() {
+            const frames = [
+                generateFrame(img, w, h, 2.4 * fade, 0.4, "", bg),
+                generateFrame(img, w, h, 1.6 * fade, 0.7, "", bg),
+                generateFrame(img, w, h, 1.0, 1.0, text, bg)
+            ];
+
+            gifshot.createGIF({
+                images: frames,
+                interval: gifLength / 3 / 1000,
+                gifWidth: w,
+                gifHeight: h,
+                numFrames: 3
+            }, function(obj) {
+                if (obj.error) return alert("GIF creation failed");
+
+                const blob = dataURLtoBlob(obj.image);
+                const sizeKB = blob.size / 1024;
+
+                // Auto-compress loop to guarantee <40 KiB // && jpegQuality > 0.30
+                if (sizeKB > 80) {
+                    jpegQuality -= 0.05;
+                    buildGIF();
+                    return;
+                }
+
+                document.getElementById("gifPreview").src = obj.image;
+                document.getElementById("sizeInfo").textContent =
+                    `Resolution: ${w}x${h} — ${sizeKB.toFixed(1)} KiB`;
+
+                const dl = document.getElementById("downloadBtn");
+                dl.style.display = "block";
+                dl.onclick = () => {
+                    const a = document.createElement("a");
+                    a.href = obj.image;
+                    a.download = "hytera_startup.gif";
+                    a.click();
+                };
+            });
+        }
+
+        buildGIF();
+    };
+
+    img.src = URL.createObjectURL(file);
+}
+
+// Utility: DataURL → Blob
+function dataURLtoBlob(dataurl) {
+    const arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length, u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    return new Blob([u8arr], { type: mime });
+}
+</script>
+
+</body>
+</html>
